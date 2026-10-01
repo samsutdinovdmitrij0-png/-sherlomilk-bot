@@ -4,11 +4,11 @@ import subprocess
 import re
 import sqlite3
 
-# Получаем токен из переменных окружения сервера Render
+# Берем токен из настроек сервера Render
 API_TOKEN = os.environ.get('BOT_TOKEN')
 bot = telebot.TeleBot(API_TOKEN)
 
-# Функция для работы с базой данных (создание таблицы при старте)
+# Функция для инициализации базы данных запросов
 def init_db():
     conn = sqlite3.connect('database.db')
     cursor = conn.cursor()
@@ -25,7 +25,7 @@ def init_db():
     conn.commit()
     conn.close()
 
-# Функция записи запроса в базу данных
+# Функция записи действий пользователей в базу данных
 def log_to_db(user_id, username, query_type, search_query):
     try:
         conn = sqlite3.connect('database.db')
@@ -39,32 +39,31 @@ def log_to_db(user_id, username, query_type, search_query):
     except Exception as e:
         print(f"Ошибка записи в БД: {e}")
 
-# Инициализируем базу данных при запуске скрипта
+# Запускаем создание БД при старте
 init_db()
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     bot.reply_to(message, (
-        "🕵️‍♂️ Привет! Я обновленный OSINT-бот **Sherlomilk**.\n\n"
+        "🕵️‍♂️ Привет! Я твой автоматический OSINT-бот **Sherlomilk**.\n\n"
         "**Что я умею искать:**\n"
         "1️⃣ **Никнейм** (пример: `ivanov`) — найду аккаунты на 400+ сайтах.\n"
-        "2️⃣ **Номер телефона** (пример: `+79991234567`) — определю регион, оператора и мессенджеры.\n"
-        "3️⃣ **Ссылки VK/TG** (пример: `https://vk.com`) — очищу и пробью ник.\n\n"
+        "2️⃣ **Номер телефона** (пример: `+79991234567`) — выдам ссылки на мессенджеры и пробив.\n"
+        "3️⃣ **Ссылки VK/TG** (пример: `://vk.com`) — очищу от мусора и найду скрытый телефон.\n\n"
         "Отправь мне любой запрос для начала поиска!"
     ), parse_mode="Markdown")
 
-# Команда для тебя (администратора) для скачивания собранной базы данных
+# Админская команда для выгрузки собранной базы данных
 @bot.message_handler(commands=['getdb'])
 def send_database(message):
-    # Дополнительная проверка безопасности (замени цифры на свой реальный Telegram ID, если хочешь закрыть доступ для чужих)
     try:
         if os.path.exists('database.db'):
             with open('database.db', 'rb') as f:
-                bot.send_document(message.chat.id, f, caption="📦 Актуальная база данных запросов Sherlomilk.")
+                bot.send_document(message.chat.id, f, caption="📦 Ваша собранная база данных запросов Sherlomilk.")
         else:
-            bot.reply_to(message, "База данных еще не сформирована.")
+            bot.reply_to(message, "База данных еще пуста.")
     except Exception as e:
-        bot.reply_to(message, f"Ошибка отправки файла: {e}")
+        bot.reply_to(message, f"Ошибка при отправке БД: {e}")
 
 @bot.message_handler(func=lambda message: True)
 def handle_osint_request(message):
@@ -72,51 +71,59 @@ def handle_osint_request(message):
     user_id = message.from_user.id
     user_name = message.from_user.username or "NoUsername"
 
-    # --- 1. ОПРЕДЕЛЕНИЕ ТИПА ЗАПРОСА: НОМЕР ТЕЛЕФОНА ---
-    # Регулярное выражение для поиска номеров телефонов
-    phone_match = re.match(r'^\+?[1-9]\d{9,14}\$', text.replace(" ", "").replace("-", ""))
+    # Очищаем текст от лишних символов для проверки на номер
+    clean_text = text.replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
     
-    if phone_match:
-        clean_phone = text.replace(" ", "").replace("-", "")
-        bot.reply_to(message, f"📱 Обнаружен номер телефона: {clean_phone}\nСобираю информацию из открытых телефонных справочников...")
+    # --- 1. ЕСЛИ ОТПРАВИЛИ НОМЕР ТЕЛЕФОНА ---
+    if clean_text.isdigit() or (clean_text.startswith('+') and clean_text[1:].isdigit()):
+        bot.reply_to(message, f"📱 Анализирую номер телефона: {clean_text}...")
+        log_to_db(user_id, user_name, "PHONE", clean_text)
         
-        # Записываем действие в нашу базу данных
-        log_to_db(user_id, user_name, "PHONE", clean_phone)
-        
-        # Генерируем OSINT-отчет по телефону
+        phone_no_plus = clean_text.replace('+', '')
         report = (
-            f"📞 **Результаты экспресс-анализа телефона {clean_phone}:**\n\n"
-            f"🔗 **WhatsApp:** https://wa.me{clean_phone.replace('+', '')}\n"
-            f"🔗 **Telegram:** https://t.me{clean_phone}\n"
-            f"🌐 **Поиск в Google:** https://google.com{clean_phone}%22\n"
-            f"🇷🇺 **Анализ кода страны:** Номер относится к международному стандарту. Для детального пробива оператора используйте реестры или официальные приложения-определители."
+            f"📞 **Результаты экспресс-анализа телефона {clean_text}:**\n\n"
+            f"🔗 **WhatsApp:** https://wa.me{phone_no_plus}\n"
+            f"🔗 **Viber:** https://viber.click{phone_no_plus}\n"
+            f"🌐 **Поиск владельца в Google:** https://google.com{clean_text}%22"
         )
         bot.send_message(message.chat.id, report, parse_mode="Markdown", disable_web_page_preview=True)
         return
 
-    # --- 2. ОПРЕДЕЛЕНИЕ ТИПА ЗАПРОСА: ССЫЛКИ TG / VK ---
-    if "://vk.com" in text or "t.me/" in text:
-        bot.reply_to(message, "🔗 Обнаружена ссылка соцсети. Очищаю адрес от мусора...")
+    # --- 2. ЕСЛИ ОТПРАВИЛИ ССЫЛКУ VK ---
+    if "://vk.com" in text:
+        log_to_db(user_id, user_name, "VK_LINK", text)
+        nickname = text.split('/')[-1].replace("@", "").strip()
         
-        # Извлекаем никнейм из ссылки
-        extracted_nickname = text.split('/')[-1].replace("@", "").strip()
-        text = extracted_nickname # Перенаправляем очищенный ник в движок Шерлока
+        bot.reply_to(message, f"🔗 Обнаружен профиль VK: `{nickname}`...\nИщу скрытые упоминания телефона в кэше поисковиков.", parse_mode="Markdown")
+        
+        vk_report = (
+            f"🕵️‍♂️ **OSINT-запросы для поиска телефона страницы VK (`{nickname}`):**\n\n"
+            f"🔎 **Поиск телефона/email в кэше Google:**\n"
+            f"`https://www.google.com/search?q=site:://vk.com{nickname}+%22%2B7%22`\n\n"
+            f"📦 **Поиск связанных объявлений (Avito/Юла):**\n"
+            f"`https://google.com://vk.com{nickname}%22+OR+%22id{nickname}%22`\n\n"
+            f"⚙️ Сейчас я параллельно прогоню этот ник по базам Шерлока..."
+        )
+        bot.send_message(message.chat.id, vk_report, parse_mode="Markdown", disable_web_page_preview=True)
+        text = nickname  # Передаем очищенный ник дальше в поиск Шерлока
 
-    # --- 3. СТАНДАРТНЫЙ ПОИСК ПО НИКНЕЙМУ (ДВИЖОК SHERLOCK) ---
+    # --- 3. ЕСЛИ ОТПРАВИЛИ ССЫЛКУ TELEGRAM ---
+    if "t.me/" in text:
+        text = text.split('/')[-1].replace("@", "").strip()
+
+    # --- 4. ГЛОБАЛЬНЫЙ ПОИСК ПО НИКНЕЙМУ (ДВИЖОК SHERLOCK) ---
     username = text.replace("@", "")
     if " " in username or ";" in username or "|" in username:
-        bot.reply_to(message, "❌ Пожалуйста, отправьте корректный никнейм, номер или ссылку без пробелов.")
+        bot.reply_to(message, "❌ Пожалуйста, введите корректный запрос одной строкой без пробелов.")
         return
 
     bot.reply_to(message, f"🔍 Запускаю сканирование никнейма `{username}` по 400+ базам данных Шерлока...", parse_mode="Markdown")
-    
-    # Сохраняем запрос никнейма в нашу базу данных
     log_to_db(user_id, user_name, "NICKNAME", username)
     
     try:
-        # Запуск оригинальной консольной утилиты Sherlock
+        # Добавлен флаг '--no-check-update' для исправления ошибки 'tag_name'
         result = subprocess.run(
-            ['sherlock', username, '--timeout', '1'], 
+            ['sherlock', username, '--timeout', '1', '--no-check-update'], 
             capture_output=True, 
             text=True, 
             check=False
@@ -124,7 +131,7 @@ def handle_osint_request(message):
         
         if result.stdout:
             output = result.stdout
-            if len(output) > 4000:
+            if len(output) > 4000: 
                 output = output[:4000] + "\n\n...список сокращен из-за лимитов Telegram."
             bot.send_message(message.chat.id, output)
         else:
