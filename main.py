@@ -3,9 +3,27 @@ import telebot
 import subprocess
 import re
 import sqlite3
+import threading
+from flask import Flask
 
 API_TOKEN = os.environ.get('BOT_TOKEN')
 bot = telebot.TeleBot(API_TOKEN)
+
+# --- БЛОК ВЕБ-СЕРВЕРА ДЛЯ RENDER (БЕСПЛАТНЫЙ ТАРИФ) ---
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "Бот Sherlomilk запущен и работает!"
+
+def run_web_server():
+    # Render автоматически передает нужный порт в переменную PORT
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host='0.0.0.0', port=port)
+
+# Запуск веб-сервера в фоновом потоке, чтобы он не мешал работе бота
+threading.Thread(target=run_web_server, daemon=True).start()
+# -----------------------------------------------------
 
 def init_db():
     conn = sqlite3.connect('database.db')
@@ -84,7 +102,7 @@ def handle_osint_request(message):
         return
 
     # --- 2. ЕСЛИ ОТПРАВИЛИ ССЫЛКУ VK ---
-    if "vk.com/" in text or "vk.ru/" in text:
+    if "://vk.com" in text or "vk.ru/" in text:
         log_to_db(user_id, user_name, "VK_LINK", text)
         nickname = text.split('/')[-1].replace("@", "").strip()
         
@@ -93,9 +111,9 @@ def handle_osint_request(message):
         vk_report = (
             f"🕵️‍♂️ **OSINT-запросы для поиска телефона страницы VK (`{nickname}`):**\n\n"
             f"🔎 **Поиск телефона/email в кэше Google:**\n"
-            f"https://google.com{nickname}+%22%2B7%22\n\n"
+            f"https://google.com{nickname}%22+%22%2B7%22\n\n"
             f"📦 **Поиск связанных объявлений (Avito/Юла):**\n"
-            f"https://google.comvk.com/{nickname}%22+OR+%22id{nickname}%22\n\n"
+            f"https://google.com/search?q=site:://vk.com{nickname}+OR+%22id{nickname}%22\n\n"
             f"⚙️ Сейчас я параллельно прогоню этот ник по базам Шерлока..."
         )
         bot.send_message(message.chat.id, vk_report, parse_mode="Markdown", disable_web_page_preview=True)
@@ -103,7 +121,6 @@ def handle_osint_request(message):
 
     # --- 3. ЕСЛИ ОТПРАВИЛИ ССЫЛКУ TELEGRAM ИЛИ ЮЗЕРНЕЙМ ---
     if "t.me/" in text or text.startswith("@") or (len(text) > 3 and not "/" in text and not "." in text):
-        # Проверяем, не никнейм ли это для Шерлока, но если есть признаки ссылки/юзернейма — пробиваем глубоко
         is_tg_request = "t.me/" in text or text.startswith("@")
         nickname = text.split('/')[-1].replace("@", "").strip()
         
@@ -149,4 +166,5 @@ def handle_osint_request(message):
     except Exception as e:
         bot.send_message(message.chat.id, "⚠️ Ошибка выполнения скрипта поиска на сервере.")
 
-bot.infinity_polling()
+if __name__ == '__main__':
+    bot.infinity_polling()
