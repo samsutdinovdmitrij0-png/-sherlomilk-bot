@@ -41,11 +41,11 @@ init_db()
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     bot.reply_to(message, (
-        "🕵️‍♂️ Привет! Я обновленный OSINT-бот **Sherlomilk**.\n\n"
+        "🕵️‍♂️ Привет! Я твой автоматический OSINT-бот **Sherlomilk**.\n\n"
         "**Что я умею искать:**\n"
         "1️⃣ **Никнейм** (пример: `ivanov`) — найду аккаунты на 400+ сайтах.\n"
         "2️⃣ **Номер телефона** (пример: `+79991234567`) — выдам мессенджеры и пробив.\n"
-        "3️⃣ **Ссылки VK/TG** (пример: `://vk.com` или `t.me/durov`) — найду скрытые связи и зацепки к номеру.\n\n"
+        "3️⃣ **Ссылки VK/TG** (пример: `://vk.com` или `t.me/durov`) — найду скрытый телефон и зацепки.\n\n"
         "Отправь мне любой запрос для начала поиска!"
     ), parse_mode="Markdown")
 
@@ -84,7 +84,7 @@ def handle_osint_request(message):
         return
 
     # --- 2. ЕСЛИ ОТПРАВИЛИ ССЫЛКУ VK ---
-    if "://vk.com" in text or "vk.ru/" in text:
+    if "vk.com/" in text or "vk.ru/" in text:
         log_to_db(user_id, user_name, "VK_LINK", text)
         nickname = text.split('/')[-1].replace("@", "").strip()
         
@@ -93,38 +93,38 @@ def handle_osint_request(message):
         vk_report = (
             f"🕵️‍♂️ **OSINT-запросы для поиска телефона страницы VK (`{nickname}`):**\n\n"
             f"🔎 **Поиск телефона/email в кэше Google:**\n"
-            f"https://www.google.com/search?q=site:://vk.com{nickname}+%22%2B7%22\n\n"
+            f"https://google.com{nickname}+%22%2B7%22\n\n"
             f"📦 **Поиск связанных объявлений (Avito/Юла):**\n"
-            f"https://google.com://vk.com{nickname}%22+OR+%22id{nickname}%22\n\n"
+            f"https://google.comvk.com/{nickname}%22+OR+%22id{nickname}%22\n\n"
             f"⚙️ Сейчас я параллельно прогоню этот ник по базам Шерлока..."
         )
         bot.send_message(message.chat.id, vk_report, parse_mode="Markdown", disable_web_page_preview=True)
         text = nickname
 
-    # --- 3. ЕСЛИ ОТПРАВИЛИ ССЫЛКУ TELEGRAM (НОВЫЙ БЛОК ПРОБИВА НОМЕРА) ---
-    if "t.me/" in text or text.startswith("@"):
-        log_to_db(user_id, user_name, "TG_LINK", text)
+    # --- 3. ЕСЛИ ОТПРАВИЛИ ССЫЛКУ TELEGRAM ИЛИ ЮЗЕРНЕЙМ ---
+    if "t.me/" in text or text.startswith("@") or (len(text) > 3 and not "/" in text and not "." in text):
+        # Проверяем, не никнейм ли это для Шерлока, но если есть признаки ссылки/юзернейма — пробиваем глубоко
+        is_tg_request = "t.me/" in text or text.startswith("@")
         nickname = text.split('/')[-1].replace("@", "").strip()
         
-        bot.reply_to(message, f"🔮 Обнаружен аккаунт Telegram: `@{nickname}`\nГенерирую хакерские ссылки для деанонимизации и поиска номера...", parse_mode="Markdown")
-        
-        tg_report = (
-            f"🕵️‍♂️ **OSINT-пробив для Telegram `@{nickname}`:**\n\n"
-            f"🆔 **Узнать внутренний ID, дату создания и историю смены ников:**\n"
-            f"Отправь юзернейм в бесплатные веб-сервисы вроде `https://telemetr.me` или специализированные боты (например, @SangMataInfo_bot)\n\n"
-            f"📞 **Поиск привязанного номера телефона в открытых веб-базах:**\n"
-            f"1️⃣ Проверка через Telegram-архив: `https://buzz.im{nickname}`\n"
-            f"2️⃣ Поиск упоминаний ника рядом с телефонами в Google:\n"
-            f"https://google.com{nickname}%22+%22%2B7%22\n\n"
-            f"⚙️ Теперь я параллельно прогоню этот ник по 400+ другим соцсетям..."
-        )
-        bot.send_message(message.chat.id, tg_report, parse_mode="Markdown", disable_web_page_preview=True)
-        text = nickname
+        if is_tg_request or (message.reply_to_message is None): 
+            log_to_db(user_id, user_name, "TG_LINK", text)
+            bot.reply_to(message, f"🔮 Анализирую аккаунт Telegram: `@{nickname}`\nИщу привязанный номер телефона по открытым базам...", parse_mode="Markdown")
+            
+            tg_report = (
+                f"🕵️‍♂️ **OSINT-пробив для Telegram `@{nickname}`:**\n\n"
+                f"🗄 **1. Поиск привязанного телефона в архивных базах Telegram:**\n"
+                f"👉 https://buzz.im{nickname}\n\n"
+                f"🔎 **2. Поиск телефона, привязанного к этому нику в Google:**\n"
+                f"👉 https://google.com{nickname}%22+%22%2B7%22\n\n"
+                f"⚙️ Теперь я параллельно прогоню ник `{nickname}` по остальным 400+ соцсетям..."
+            )
+            bot.send_message(message.chat.id, tg_report, parse_mode="Markdown", disable_web_page_preview=True)
+            text = nickname
 
     # --- 4. ГЛОБАЛЬНЫЙ ПОИСК ПО НИКНЕЙМУ (ДВИЖОК SHERLOCK) ---
     username = text.replace("@", "")
-    if " " in username or ";" in username or "|" in username:
-        bot.reply_to(message, "❌ Пожалуйста, введите корректный запрос одной строкой без пробелов.")
+    if " " in username or ";" in username or "|" in username or len(username) < 2:
         return
 
     bot.reply_to(message, f"🔍 Запускаю сканирование никнейма `{username}` по базам Шерлока...", parse_mode="Markdown")
