@@ -1,10 +1,13 @@
 import os
 import telebot
-import subprocess
 import re
 import sqlite3
 import threading
 from flask import Flask
+
+# Импортируем официальные модули самого проекта Sherlock
+from sherlock.sherlock import Sherlock
+from sherlock.sites import SitesInformation
 
 API_TOKEN = os.environ.get('BOT_TOKEN')
 bot = telebot.TeleBot(API_TOKEN)
@@ -17,11 +20,9 @@ def home():
     return "Бот Sherlomilk запущен и работает!"
 
 def run_web_server():
-    # Render автоматически передает нужный порт в переменную PORT
     port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
 
-# Запуск веб-сервера в фоновом потоке, чтобы он не мешал работе бота
 threading.Thread(target=run_web_server, daemon=True).start()
 # -----------------------------------------------------
 
@@ -139,7 +140,7 @@ def handle_osint_request(message):
             bot.send_message(message.chat.id, tg_report, parse_mode="Markdown", disable_web_page_preview=True)
             text = nickname
 
-    # --- 4. ГЛОБАЛЬНЫЙ ПОИСК ПО НИКНЕЙМУ (ДВИЖОК SHERLOCK) ---
+    # --- 4. ГЛОБАЛЬНЫЙ ПОИСК ПО НИКНЕЙМУ (НАСТОЯЩИЙ SHERLOCK ВНУТРИ PYTHON) ---
     username = text.replace("@", "")
     if " " in username or ";" in username or "|" in username or len(username) < 2:
         return
@@ -148,22 +149,33 @@ def handle_osint_request(message):
     log_to_db(user_id, user_name, "NICKNAME", username)
     
     try:
-        result = subprocess.run(
-            ['sherlock', username, '--timeout', '1', '--no-check-update'], 
-            capture_output=True, 
-            text=True, 
-            check=False
-        )
+        # Инициализируем базу данных сайтов самого Шерлока
+        sites = SitesInformation()
+        # Запускаем оригинальный процесс поиска Шерлока внутри нашей программы
+        sherlock_instance = Sherlock(sites)
         
-        if result.stdout:
-            output = result.stdout
+        # Получаем результаты сканирования (timeout=1 секунда на сайт, как у вас и было)
+        results = sherlock_instance.id_from_username(username, timeout=1)
+        
+        output = f"📊 **Результаты поиска для `{username}`:**\n\n"
+        found_links = []
+        
+        # Обрабатываем оригинальный словарь ответов Шерлока
+        for site_name, site_data in results.items():
+            if site_data.get('status') == 'CLAIMED':  # Если аккаунт точно найден
+                url = site_data.get('url_user')
+                found_links.append(f"🔹 **{site_name}**: {url}")
+        
+        if found_links:
+            output += "\n".join(found_links)
             if len(output) > 4000: 
                 output = output[:4000] + "\n\n...список сокращен из-за лимитов Telegram."
-            bot.send_message(message.chat.id, output)
+            bot.send_message(message.chat.id, output, disable_web_page_preview=True)
         else:
             bot.send_message(message.chat.id, "❌ Профилей с таким никнеймом в глобальных базах Шерлока не найдено.")
             
     except Exception as e:
+        print(f"Ошибка Sherlock API: {e}")
         bot.send_message(message.chat.id, "⚠️ Ошибка выполнения скрипта поиска на сервере.")
 
 if __name__ == '__main__':
