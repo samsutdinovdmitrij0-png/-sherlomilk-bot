@@ -1,3 +1,5 @@
 pyTelegramBotAPI
-sherlock-project
 flask
+requests
+sherlock
+
