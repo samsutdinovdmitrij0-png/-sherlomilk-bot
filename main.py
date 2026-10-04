@@ -6,7 +6,6 @@ import base64
 # ==========================================
 # ТОКЕНЫ И НАСТРОЙКИ
 # ==========================================
-# Твой рабочий токен успешно интегрирован
 TELEGRAM_TOKEN = "8730411274:AAHzwv1el2hAH_Xq4Wm7_6iZ-KLy0fLpz9Y"
 
 # Бесплатный прокси-ключ ИИ (работает в РФ без VPN и ограничений)
@@ -61,7 +60,7 @@ def send_welcome(message):
     chat_id = message.chat.id
     user_history[chat_id] = [
         {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "system", "content": f"АКТУАЛЬНЫContext ЖИЗНИ ДМИТРИЯ:\n{CONTEXT_TODAY}"}
+        {"role": "system", "content": f"АКТУАЛЬНЫЙ КОНТЕКСТ ЖИЗНИ ДМИТРИЯ:\n{CONTEXT_TODAY}"}
     ]
     bot.reply_to(message, "Здорово, Дмитрий! Твой личный ИИ-ментор запущен. Вся сегодняшняя база по Алине, Ане и Алёне уже вшита в мою память. Сюда можно слать текст, скриншоты или пересылать ГС от девчонок — всё разберем.")
 
@@ -115,7 +114,7 @@ def handle_photo(message):
         bot.reply_to(message, "Не удалось считать скрин. Попробуй скинуть еще раз.")
 
 # ==========================================
-# ОБРАБОТКА И П ПЕРЕСЫЛКА ГС (WHISPER)
+# ОБРАБОТКА И ПЕРЕСЫЛКА ГС (WHISPER)
 # ==========================================
 @bot.message_handler(content_types=["voice"])
 def handle_voice(message):
@@ -160,4 +159,3 @@ def handle_voice(message):
         bot.reply_to(message, "Не удалось расшифровать звук. Напиши текстом, что там было.")
 
 bot.infinity_polling()
-
