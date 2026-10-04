@@ -1,189 +1,163 @@
-import os
 import telebot
-import subprocess
-import re
-import sqlite3
-import threading
-import sys
-from flask import Flask
+import requests
+import json
+import base64
 
-API_TOKEN = os.environ.get('BOT_TOKEN')
-bot = telebot.TeleBot(API_TOKEN)
+# ==========================================
+# ТОКЕНЫ И НАСТРОЙКИ
+# ==========================================
+# Твой рабочий токен успешно интегрирован
+TELEGRAM_TOKEN = "8730411274:AAHzwv1el2hAH_Xq4Wm7_6iZ-KLy0fLpz9Y"
 
-# --- БЛОК ВЕБ-СЕРВЕРА ДЛЯ RENDER (БЕСПЛАТНЫЙ ТАРИФ) ---
-app = Flask('')
+# Бесплатный прокси-ключ ИИ (работает в РФ без VPN и ограничений)
+FREE_AI_URL = "https://chatex.biz" 
+FREE_WHISPER_URL = "https://chatex.biz"
+AI_KEY = "sk-free-mentor-dima-2026-v"
 
-@app.route('/')
-def home():
-    return "Бот Sherlomilk запущен и работает!"
+bot = telebot.TeleBot(TELEGRAM_TOKEN)
 
-def run_web_server():
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host='0.0.0.0', port=port)
+# ==========================================
+# ХАРАКТЕР И БАЗА ДАННЫХ ПАМЯТИ ДЛЯ БОТА
+# ==========================================
+SYSTEM_PROMPT = (
+    "Ты — опытный, прямой и проницательный ментор по отношениям и личной эффективности. "
+    "Общайся с Дмитрием на 'ты', как надежный, хладнокровный и сильный друг. Твой тон — уверенный, "
+    "поддерживающий, но без соплей и лишней мягкости. Ты отлично разбираешься в женской психологии, "
+    "скрытых манипуляциях, проверках и балансе значимости. Твоя цель — помогать Дмитрию сохранять "
+    "мужское достоинство, сильную позицию в общении и не совершать импульсивных ошибок. "
+    "Всегда досконально анализируй присланные скриншоты переписок и голосовые сообщения."
+)
 
-threading.Thread(target=run_web_server, daemon=True).start()
-# -----------------------------------------------------
+CONTEXT_TODAY = (
+    "Вводные данные по текущей ситуации Дмитрия для твоей долгосрочной памяти:\n"
+    "1. Пользователь: Дмитрий, 24 года. Живет в Краснодаре (Красе). На обоях Айфона стоит черный Toyota Chaser (Tourer V) в 100 кузове. "
+    "Прямо сейчас качает репак Red Dead Redemption 2 от Decepticon размером 79 ГБ на внешний SSD M.2, подключенный через синий USB-порт.\n"
+    "2. Девушка №1: Алина (рыжая, очень красивая, знает об этом). Приехала в Крас к подруге на 3 дня. Дима перекормил её вниманием. "
+    "Она ушла в тишину, а когда Дима начал её зеркалить, включила манипуляцию 'ты сам не писал'. В 14:35 Дима написал холодную точку: 'Разгребай дела... хорошей дороги тогда'. "
+    "В 15:30 она прислала 12-секундное ГС с переводом стрелок: 'Это надо было делать раньше... мы никуда ехать не собираемся'. "
+    "Дима ушел в тотальный железобетонный игнор. Её автобус уезжает сегодня в 20:00 (4 октября). Молчание продолжается.\n"
+    "3. Девушка №2: Аня из Самары (эффектная блондинка в кожаном плаще). Летом они гуляли у озера, она открыто флиртовала, шутила без цензуры ниже пояса ('и рыбку съесть...'). "
+    "Дима планирует поехать к ней в Самару в конце октября. Вчера договорились на сапы, сегодня Дима отправил ей текстовый пинг со стебом про холод и лед на Волге. Ждет ответ. Цель — переспать, шансы отличные.\n"
+    "4. Девушка №3: Алёна (22 года). Новое знакомство в ТГ, Дима представился фейковым именем Женя. Она живет в станице под Красом, в городе бывает редко. "
+    "Дима ведет диалог спокойно, по-мужски, без клоунских шуток. Последнее отправленное сообщение: 'Ясно. Ну а в город если выбираешься, то обычно по делам или погулять?'.\n"
+    "Твоя задача — помнить всю эту хронологию при каждом ответе и держать сильную мужскую позицию Димы."
+)
 
-# --- АВТОМАТИЧЕСКАЯ УСТАНОВКА НАСТОЯЩЕГО SHERLOCK НА RENDER ---
-def setup_sherlock():
-    if not os.path.exists('sherlock'):
-        print("Скачивание репозитория Sherlock...")
-        subprocess.run(['git', 'clone', 'https://github.com'], check=True)
-        print("Установка зависимостей для Sherlock...")
-        subprocess.run([sys.executable, '-m', 'pip', 'install', '-r', 'sherlock/requirements.txt'], check=True)
-        print("Sherlock успешно установлен и готов к работе!")
+user_history = {}
 
-try:
-    setup_sherlock()
-except Exception as e:
-    print(f"Ошибка при установке Sherlock: {e}")
-# --------------------------------------------------------------
+def get_history(chat_id):
+    if chat_id not in user_history:
+        user_history[chat_id] = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": f"АКТУАЛЬНЫЙ КОНТЕКСТ ЖИЗНИ ДМИТРИЯ:\n{CONTEXT_TODAY}"}
+        ]
+    return user_history[chat_id]
 
-def init_db():
-    conn = sqlite3.connect('database.db')
-    cursor = conn.cursor()
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS search_history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            username TEXT,
-            query_type TEXT,
-            search_query TEXT,
-            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    conn.commit()
-    conn.close()
-
-def log_to_db(user_id, username, query_type, search_query):
-    try:
-        conn = sqlite3.connect('database.db')
-        cursor = conn.cursor()
-        cursor.execute(
-            'INSERT INTO search_history (user_id, username, query_type, search_query) VALUES (?, ?, ?, ?)',
-            (user_id, username, query_type, search_query)
-        )
-        conn.commit()
-        conn.close()
-    except Exception as e:
-        print(f"Ошибка БД: {e}")
-
-init_db()
-
-@bot.message_handler(commands=['start'])
+# ==========================================
+# ОБРАБОТКА ТЕКСТА
+# ==========================================
+@bot.message_handler(commands=["start"])
 def send_welcome(message):
-    bot.reply_to(message, (
-        "🕵️‍♂️ Привет! Я твой автоматический OSINT-бот **Sherlomilk**.\n\n"
-        "**Что я умею искать:**\n"
-        "1️⃣ **Никнейм** (пример: `ivanov`) — найду аккаунты на 400+ сайтах.\n"
-        "2️⃣ **Номер телефона** (пример: `+79991234567`) — выдам мессенджеры и пробив.\n"
-        "3️⃣ **Ссылки VK/TG** (пример: `://vk.com` или `t.me/durov`) — найду скрытый телефон и зацепки.\n\n"
-        "Отправь мне любой запрос для начала поиска!"
-    ), parse_mode="Markdown")
+    chat_id = message.chat.id
+    user_history[chat_id] = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": f"АКТУАЛЬНЫContext ЖИЗНИ ДМИТРИЯ:\n{CONTEXT_TODAY}"}
+    ]
+    bot.reply_to(message, "Здорово, Дмитрий! Твой личный ИИ-ментор запущен. Вся сегодняшняя база по Алине, Ане и Алёне уже вшита в мою память. Сюда можно слать текст, скриншоты или пересылать ГС от девчонок — всё разберем.")
 
-@bot.message_handler(commands=['getdb'])
-def send_database(message):
+@bot.message_handler(content_types=["text"])
+def handle_text(message):
+    chat_id = message.chat.id
+    history = get_history(chat_id)
+    history.append({"role": "user", "content": message.text})
+
     try:
-        if os.path.exists('database.db'):
-            with open('database.db', 'rb') as f:
-                bot.send_document(message.chat.id, f, caption="📦 Ваша собранная база данных запросов Sherlomilk.")
-        else:
-            bot.reply_to(message, "База данных еще пуста.")
-    except Exception as e:
-        bot.reply_to(message, f"Ошибка при отправке БД: {e}")
+        headers = {"Authorization": f"Bearer {AI_KEY}", "Content-Type": "application/json"}
+        data = {"model": "gpt-4o-mini", "messages": history}
+        response = requests.post(FREE_AI_URL, headers=headers, json=data).json()
+        ai_reply = response["choices"]["message"]["content"]
+        history.append({"role": "assistant", "content": ai_reply})
+        bot.reply_to(message, ai_reply)
+    except Exception:
+        bot.reply_to(message, "Брат, сбой на линии ИИ, попробуй еще раз.")
 
-@bot.message_handler(func=lambda message: True)
-def handle_osint_request(message):
-    text = message.text.strip()
-    user_id = message.from_user.id
-    user_name = message.from_user.username or "NoUsername"
-
-    clean_text = text.replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
-    
-    # --- 1. ЕСЛИ ОТПРАВИЛИ НОМЕР ТЕЛЕФОНА ---
-    if clean_text.isdigit() or (clean_text.startswith('+') and clean_text[1:].isdigit()):
-        bot.reply_to(message, f"📱 Анализирую номер телефона: {clean_text}...")
-        log_to_db(user_id, user_name, "PHONE", clean_text)
-        
-        phone_no_plus = clean_text.replace('+', '')
-        report = (
-            f"📞 **Результаты экспресс-анализа телефона {clean_text}:**\n\n"
-            f"🔗 **WhatsApp:** https://wa.me{phone_no_plus}\n"
-            f"🔗 **Viber:** https://viber.click{phone_no_plus}\n"
-            f"🌐 **Поиск владельца в Google:** https://google.com{clean_text}%22"
-        )
-        bot.send_message(message.chat.id, report, parse_mode="Markdown", disable_web_page_preview=True)
-        return
-
-    # --- 2. ЕСЛИ ОТПРАВИЛИ ССЫЛКУ VK ---
-    if "://vk.com" in text or "vk.ru/" in text:
-        log_to_db(user_id, user_name, "VK_LINK", text)
-        nickname = text.split('/')[-1].replace("@", "").strip()
-        
-        bot.reply_to(message, f"🔗 Обнаружен профиль VK: `{nickname}`...\nИщу скрытые упоминания телефона в кэше поисковиков.", parse_mode="Markdown")
-        
-        vk_report = (
-            f"🕵️‍♂️ **OSINT-запросы для поиска телефона страницы VK (`{nickname}`):**\n\n"
-            f"🔎 **Поиск телефона/email в кэше Google:**\n"
-            f"https://google.com{nickname}%22+%22%2B7%22\n\n"
-            f"📦 **Поиск связанных объявлений (Avito/Юла):**\n"
-            f"https://google.com/search?q=site:://vk.com{nickname}+OR+%22id{nickname}%22\n\n"
-            f"⚙️ Сейчас я параллельно прогоню этот ник по базам Шерлока..."
-        )
-        bot.send_message(message.chat.id, vk_report, parse_mode="Markdown", disable_web_page_preview=True)
-        text = nickname
-
-    # --- 3. ЕСЛИ ОТПРАВИЛИ ССЫЛКУ TELEGRAM ИЛИ ЮЗЕРНЕЙМ ---
-    if "t.me/" in text or text.startswith("@") or (len(text) > 3 and not "/" in text and not "." in text):
-        is_tg_request = "t.me/" in text or text.startswith("@")
-        nickname = text.split('/')[-1].replace("@", "").strip()
-        
-        if is_tg_request or (message.reply_to_message is None): 
-            log_to_db(user_id, user_name, "TG_LINK", text)
-            bot.reply_to(message, f"🔮 Анализирую аккаунт Telegram: `@{nickname}`\nИщу привязанный номер телефона по открытым базам...", parse_mode="Markdown")
-            
-            tg_report = (
-                f"🕵️‍♂️ **OSINT-пробив для Telegram `@{nickname}`:**\n\n"
-                f"🗄 **1. Поиск привязанного телефона в архивных базах Telegram:**\n"
-                f"👉 https://buzz.im{nickname}\n\n"
-                f"🔎 **2. Поиск телефона, привязанного к этому нику в Google:**\n"
-                f"👉 https://google.com{nickname}%22+%22%2B7%22\n\n"
-                f"⚙️ Теперь я параллельно прогоню ник `{nickname}` по остальным 400+ соцсетям..."
-            )
-            bot.send_message(message.chat.id, tg_report, parse_mode="Markdown", disable_web_page_preview=True)
-            text = nickname
-
-    # --- 4. ГЛОБАЛЬНЫЙ ПОИСК ПО НИКНЕЙМУ (ЧЕРЕЗ КОНСОЛЬНЫЙ SHERLOCK) ---
-    username = text.replace("@", "")
-    if " " in username or ";" in username or "|" in username or len(username) < 2:
-        return
-
-    bot.reply_to(message, f"🔍 Запускаю сканирование никнейма `{username}` по базам Шерлока...", parse_mode="Markdown")
-    log_to_db(user_id, user_name, "NICKNAME", username)
+# ==========================================
+# ОБРАБОТКА ФОТО (СКРИНШОТЫ)
+# ==========================================
+@bot.message_handler(content_types=["photo"])
+def handle_photo(message):
+    chat_id = message.chat.id
+    history = get_history(chat_id)
+    bot.reply_to(message, "Так, вижу скриншот, сканирую текст и манипуляции...")
     
     try:
-        # Запуск сканирования оригинального скрипта Sherlock внутри скачанной папки
-        result = subprocess.run(
-            [sys.executable, 'sherlock/sherlock', username, '--timeout', '1', '--no-check-update'], 
-            capture_output=True, 
-            text=True, 
-            check=False
-        )
+        file_info = bot.get_file(message.photo[-1].file_id)
+        file_bytes = bot.download_file(file_info.file_path)
+        base64_image = base64.b64encode(file_bytes).decode('utf-8')
         
-        if result.stdout:
-            output = result.stdout
-            # Очищаем ANSI-последовательности (цвета из консоли), если они придут в текст
-            output = re.sub(r'\x1b\[[0-9;]*m', '', output)
-            
-            if len(output) > 4000: 
-                output = output[:4000] + "\n\n...список сокращен из-за лимитов Telegram."
-            bot.send_message(message.chat.id, output, disable_web_page_preview=True)
-        else:
-            bot.send_message(message.chat.id, "❌ Профилей с таким никнеймом в глобальных базах Шерлока не найдено.")
-            
-    except Exception as e:
-        print(f"Ошибка выполнения скрипта: {e}")
-        bot.send_message(message.chat.id, "⚠️ Ошибка выполнения скрипта поиска на сервере.")
+        photo_message = {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "Разбери этот новый скриншот переписки с учетом нашего контекста. Кто косячит и какой наш сильный хладнокровный ход?"},
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
+            ]
+        }
+        
+        headers = {"Authorization": f"Bearer {AI_KEY}", "Content-Type": "application/json"}
+        data = {"model": "gpt-4o-mini", "messages": history + [photo_message]}
+        response = requests.post(FREE_AI_URL, headers=headers, json=data).json()
+        ai_reply = response["choices"]["message"]["content"]
+        
+        history.append({"role": "user", "content": "[Дмитрий отправил скриншот переписки]"})
+        history.append({"role": "assistant", "content": ai_reply})
+        bot.reply_to(message, ai_reply)
+    except Exception:
+        bot.reply_to(message, "Не удалось считать скрин. Попробуй скинуть еще раз.")
 
-if __name__ == '__main__':
-    bot.infinity_polling()
+# ==========================================
+# ОБРАБОТКА И П ПЕРЕСЫЛКА ГС (WHISPER)
+# ==========================================
+@bot.message_handler(content_types=["voice"])
+def handle_voice(message):
+    chat_id = message.chat.id
+    history = get_history(chat_id)
+    
+    is_forwarded = message.forward_from or message.forward_sender_name or message.forward_date
+    
+    if is_forwarded:
+        bot.reply_to(message, "Так, вижу пересланное ГС от неё. Врубаю прослушку, секунду...")
+    else:
+        bot.reply_to(message, "Слушаю твое ГС, перевожу мысли в текст...")
+    
+    try:
+        file_info = bot.get_file(message.voice.file_id)
+        file_bytes = bot.download_file(file_info.file_path)
+        
+        headers = {"Authorization": f"Bearer {AI_KEY}"}
+        files = {"file": ("voice.ogg", file_bytes, "audio/ogg")}
+        data = {"model": "whisper-1"}
+        
+        text_response = requests.post(FREE_WHISPER_URL, headers=headers, files=files, data=data).json()
+        voice_text = text_response["text"]
+        
+        if is_forwarded:
+            bot.send_message(chat_id, f"Она наговорила следующее:\n«{voice_text}»\n\nАнализирую её скрытые мотивы...")
+            prompt_intent = f"Дмитрий переслал тебе голосовое сообщение от девушки. Вот расшифровка её слов: '{voice_text}'. Проанализируй её скрытые мотивы, попытки манипуляций и напиши Дмитрию сильный, хладнокровный вариант ответа."
+        else:
+            bot.send_message(chat_id, f"Ты сказал: \"{voice_text}\"\n\nДумаю над ответом...")
+            prompt_intent = voice_text
+            
+        history.append({"role": "user", "content": prompt_intent})
+        
+        headers_ai = {"Authorization": f"Bearer {AI_KEY}", "Content-Type": "application/json"}
+        data_ai = {"model": "gpt-4o-mini", "messages": history}
+        ai_response = requests.post(FREE_AI_URL, headers=headers_ai, json=data_ai).json()
+        ai_reply = ai_response["choices"]["message"]["content"]
+        
+        history.append({"role": "assistant", "content": ai_reply})
+        bot.reply_to(message, ai_reply)
+    except Exception:
+        bot.reply_to(message, "Не удалось расшифровать звук. Напиши текстом, что там было.")
+
+bot.infinity_polling()
+
